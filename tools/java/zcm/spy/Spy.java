@@ -1,17 +1,12 @@
 package zcm.spy;
 
 import javax.swing.*;
-import javax.swing.event.*;
 import javax.swing.table.*;
-import javax.swing.tree.*;
 import java.awt.*;
 import java.awt.event.*;
 
 import java.io.*;
 import java.util.*;
-import java.util.jar.*;
-import java.util.zip.*;
-
 import zcm.util.*;
 import java.lang.reflect.*;
 
@@ -20,12 +15,10 @@ import zcm.zcm.*;
 /** Spy main class. **/
 public class Spy
 {
-    JFrame       jf;
-    JDesktopPane jdp;
-
-    ZCM              zcm;
+    ZCM          zcm;
     ZCM.Subscription subs;
-    ZCMTypeDatabase  handlers;
+    ZCMTypeDatabase handlers;
+    long startuTime; // time that zcm-spy started
 
     HashMap<String,  ChannelData> channelMap = new HashMap<String, ChannelData>();
     ArrayList<ChannelData>        channelList = new ArrayList<ChannelData>();
@@ -33,23 +26,26 @@ public class Spy
     ChannelTableModel _channelTableModel = new ChannelTableModel();
     TableSorter  channelTableModel = new TableSorter(_channelTableModel);
     JTable channelTable = new JTable(channelTableModel);
+    ChartData chartData;
 
     ArrayList<SpyPlugin> plugins = new ArrayList<SpyPlugin>();
 
     JButton clearButton = new JButton("Clear");
 
-    public Spy(String url) throws IOException
+    public Spy(String zcmurl, WindowTitleOptions titleOptions) throws IOException
     {
-        jf = new JFrame("ZCM Spy");
-        jdp = new JDesktopPane();
-        jdp.setBackground(new Color(0, 0, 160));
-        jf.setLayout(new BorderLayout());
-        jf.add(jdp, BorderLayout.CENTER);
-
-        jf.setSize(1024, 768);
-        jf.setVisible(true);
-
-        //	sortedChannelTableModel.addMouseListenerToHeaderInTable(channelTable);
+        String title = "ZCM Spy";
+        {
+            String spacer = "  •  ";
+            if (null != titleOptions.label) {
+                title += spacer + titleOptions.label;
+            }
+            if (titleOptions.showURL) {
+                title += spacer + zcmurl;
+            }
+        }
+        
+        //    sortedChannelTableModel.addMouseListenerToHeaderInTable(channelTable);
         channelTableModel.setTableHeader(channelTable.getTableHeader());
         channelTableModel.setSortingStatus(0, TableSorter.ASCENDING);
 
@@ -64,18 +60,21 @@ public class Spy
         tcm.getColumn(5).setMaxWidth(100);
         tcm.getColumn(6).setMaxWidth(100);
 
-        JInternalFrame jif = new JInternalFrame("Channels", true);
+        JFrame jif = new JFrame(title);
         jif.setLayout(new BorderLayout());
         jif.add(channelTable.getTableHeader(), BorderLayout.PAGE_START);
-        // Note: weird bug, if clearButton is added after JScrollPane, we get an error.
+        // XXX weird bug, if clearButton is added after JScrollPane, we get an error.
         jif.add(clearButton, BorderLayout.SOUTH);
         jif.add(new JScrollPane(channelTable), BorderLayout.CENTER);
 
-        jif.setSize(800,600);
-        jif.setVisible(true);
-        jdp.add(jif);
+        chartData = new ChartData(utime_now());
 
-        zcm = new ZCM(url);
+        jif.setSize(800,600);
+        jif.setLocationByPlatform(true);
+        jif.setVisible(true);
+
+        
+        zcm = new ZCM(zcmurl);
         subs = zcm.subscribe(".*", new MySubscriber());
 
         zcm.start();
@@ -83,17 +82,17 @@ public class Spy
         new HzThread().start();
 
         clearButton.addActionListener(new ActionListener()
-	    {
+        {
             public void actionPerformed(ActionEvent e)
             {
                 channelMap.clear();
                 channelList.clear();
                 channelTableModel.fireTableDataChanged();
             }
-	    });
+        });
 
         channelTable.addMouseListener(new MouseAdapter()
-	    {
+        {
             public void mouseClicked(MouseEvent e)
             {
                 int mods=e.getModifiersEx();
@@ -112,7 +111,10 @@ public class Spy
                     for (SpyPlugin plugin : plugins)
                     {
                         if (!got_one && plugin.canHandle(cd.fingerprint)) {
-                            plugin.getAction(jdp, cd).actionPerformed(null);
+
+                            // start the plugin
+                            (new PluginStarter(plugin, cd)).getAction().actionPerformed(null);
+
                             got_one = true;
                         }
                     }
@@ -121,24 +123,67 @@ public class Spy
                         createViewer(channelList.get(row));
                 }
             }
-	    });
+        });
 
-        jf.addWindowListener(new WindowAdapter()
-	    {
+        jif.addWindowListener(new WindowAdapter()
+        {
             public void windowClosing(WindowEvent e)
             {
-                zcm.stop();
-                zcm.unsubscribe(subs);
-                zcm.close();
                 System.out.println("Spy quitting");
                 System.exit(0);
             }
-	    });
+        });
 
         ClassDiscoverer.findClasses(new PluginClassVisitor());
         System.out.println("Found "+plugins.size()+" plugins");
         for (SpyPlugin plugin : plugins) {
             System.out.println(" "+plugin);
+        }
+
+    }
+
+    class PluginStarter
+    {
+
+        private SpyPlugin plugin;
+        private ChannelData cd;
+        private String name;
+
+
+        public PluginStarter(SpyPlugin pluginIn, ChannelData cdIn)
+        {
+            plugin = pluginIn;
+            cd = cdIn;
+            Action thisAction = plugin.getAction(null, null);
+            name = (String) thisAction.getValue("Name");
+        }
+
+        public Action getAction() { return new PluginStarterAction(); }
+
+        class PluginStarterAction extends AbstractAction
+        {
+            public PluginStarterAction() {
+                super(name);
+            }
+
+            @Override
+            public void actionPerformed(ActionEvent e) {
+
+                // for historical reasons, plugins expect a JDesktopPane
+                // here we create a JFrame, add a JDesktopPane, and start the
+                // plugin by calling its actionPerformed method
+
+                JFrame pluginFrame = new JFrame(cd.name);
+                pluginFrame.setLayout(new BorderLayout());
+                JDesktopPane pluginJdp = new JDesktopPane();
+                pluginFrame.add(pluginJdp);
+                pluginFrame.setSize(500, 400);
+                pluginFrame.setLocationByPlatform(true);
+                pluginFrame.setVisible(true);
+
+                plugin.getAction(pluginJdp, cd).actionPerformed(null);
+
+            }
         }
     }
 
@@ -150,7 +195,7 @@ public class Spy
             for (Class iface : interfaces) {
                 if (iface.equals(SpyPlugin.class)) {
                     try {
-                        Constructor c = cls.getConstructor(new Class[0]);
+                        Constructor c = ((Class<?>)cls).getConstructor(new Class[0]);
                         SpyPlugin plugin = (SpyPlugin) c.newInstance(new Object[0]);
                         plugins.add(plugin);
                     } catch (Exception ex) {
@@ -163,28 +208,42 @@ public class Spy
 
     void createViewer(ChannelData cd)
     {
+
         if (cd.viewerFrame != null && !cd.viewerFrame.isVisible())
-	    {
+        {
             cd.viewerFrame.dispose();
             cd.viewer = null;
-	    }
+        }
 
         if (cd.viewer == null) {
-            cd.viewerFrame = new JInternalFrame(cd.name, true, true);
+            cd.viewerFrame = new JFrame(cd.name);
 
-            cd.viewer = new ObjectPanel(cd.name);
-            cd.viewer.setObject(cd.last);
+            cd.viewer = new ObjectPanel(cd.name, chartData);
 
-            //	cd.viewer = new ObjectViewer(cd.name, cd.cls, null);
+            //    cd.viewer = new ObjectViewer(cd.name, cd.cls, null);
             cd.viewerFrame.setLayout(new BorderLayout());
-            cd.viewerFrame.add(new JScrollPane(cd.viewer), BorderLayout.CENTER);
 
-            jdp.add(cd.viewerFrame);
-            cd.viewerFrame.setSize(500,400);
+            // default scroll speed is too slow, so increase it
+            JScrollPane viewerScrollPane = new JScrollPane(cd.viewer);
+            viewerScrollPane.getVerticalScrollBar().setUnitIncrement(16);
+            
+            // we need to tell the viewer what its viewport is so that it can
+            // make smart decisions about which elements are in view of the user
+            // so it can avoid drawing items outside the view
+            cd.viewer.setViewport(viewerScrollPane.getViewport());
+            
+            cd.viewerFrame.add(viewerScrollPane, BorderLayout.CENTER);
+            
+            cd.viewer.setObject(cd.last, cd.last_utime);
+
+            //jdp.add(cd.viewerFrame);
+
+            cd.viewerFrame.setSize(650,400);
+            cd.viewerFrame.setLocationByPlatform(true);
             cd.viewerFrame.setVisible(true);
         } else {
             cd.viewerFrame.setVisible(true);
-            cd.viewerFrame.moveToFront();
+            //cd.viewerFrame.moveToFront();
         }
     }
 
@@ -308,11 +367,11 @@ public class Spy
 
                 cd.nreceived++;
 
-                o = cd.cls.getConstructor(ZCMDataInputStream.class).newInstance(dins);
+                o = ((Class<?>)cd.cls).getConstructor(ZCMDataInputStream.class).newInstance(dins);
                 cd.last = o;
 
                 if (cd.viewer != null)
-                    cd.viewer.setObject(o);
+                    cd.viewer.setObject(o, cd.last_utime);
 
             } catch (NullPointerException ex) {
                 cd.nerrors++;
@@ -418,14 +477,20 @@ public class Spy
 
         jm.add(new DefaultViewer(cd));
 
+
+
         if (cd.cls != null)
-	    {
+        {
             for (SpyPlugin plugin : plugins)
-		    {
+            {
                 if (plugin.canHandle(cd.fingerprint))
-                    jm.add(plugin.getAction(jdp, cd));
-		    }
-	    }
+                {
+                    jm.add(new PluginStarter(plugin, cd).getAction());
+
+                    //jm.add(plugin.getAction(this_desktop_pane, cd));
+                }
+            }
+        }
 
         jm.show(channelTable, e.getX(), e.getY());
     }
@@ -446,10 +511,17 @@ public class Spy
         System.err.println("unrecognized messages.");
         System.err.println("");
         System.err.println("Options:");
-        System.err.println("  -u, --zcm-url=URL      Use the specified ZCM URL");
         System.err.println("  -h, --help             Shows this help text and exits");
+        System.err.println("  -l, --zcm-url=URL      Use the specified ZCM URL");
+        System.err.println("  -t, --title [LABEL]    Display LABEL in the window title");
+        System.err.println("  --title-url            Display the ZCM URL in the title");
         System.err.println("");
         System.exit(1);
+    }
+
+    static class WindowTitleOptions {
+        String label = null;
+        boolean showURL = false;
     }
 
     public static void main(String args[])
@@ -460,31 +532,53 @@ public class Spy
             System.err.println("         The Sun JRE is recommended.");
         }
 
+        final String ARG_ZCM_URL = "--zcm-url";
+        final String ARG_ZCM_URL_EQ = ARG_ZCM_URL + "=";
+        final String ARG_TITLE = "--title";
+        final String ARG_TITLE_URL = "--title-url";
+
         String zcmurl = null;
-        for(int optind=0; optind<args.length; optind++) {
+        WindowTitleOptions titleOptions = new WindowTitleOptions();
+        for (int optind = 0; optind < args.length; optind++) {
             String c = args[optind];
-            if(c.equals("-h") || c.equals("--help")) {
+            boolean hasParam = optind + 1 < args.length;
+
+            if (c.equals("-h") || c.equals("--help")) {
                 usage();
-            } else if(c.equals("-u") || c.equals("--zcm-url") || c.startsWith("--zcm-url=")) {
+            } else if (c.equals("-l") || c.equals(ARG_ZCM_URL) || c.startsWith(ARG_ZCM_URL_EQ)) {
                 String optarg = null;
-                if(c.startsWith("--zcm-url=")) {
-                    optarg=c.substring(10);
-                } else if(optind < args.length) {
+
+                if (c.startsWith(ARG_ZCM_URL_EQ)) {
+                    optarg = c.substring(ARG_ZCM_URL_EQ.length());
+                } else if (hasParam) {
                     optind++;
                     optarg = args[optind];
                 }
-                if(null == optarg) {
+
+                if (null == optarg || optarg.isEmpty()) {
                     usage();
                 } else {
                     zcmurl = optarg;
                 }
+            } else if (c.equals("-t") || c.equals(ARG_TITLE)) {
+                if (hasParam) {
+                    optind++;
+                    titleOptions.label = args[optind];
+                } else {
+                    usage();
+
+                }
+
+            } else if (c.equals(ARG_TITLE_URL)) {
+                titleOptions.showURL = true;
+
             } else {
                 usage();
             }
         }
 
         try {
-            new Spy(zcmurl);
+            new Spy(zcmurl, titleOptions);
         } catch (IOException ex) {
             System.out.println(ex);
         }
