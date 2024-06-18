@@ -53,7 +53,7 @@ PKGS+='build-essential '
 PKGS+='libzmq3-dev '
 
 ## Java
-PKGS+='default-jdk default-jre '
+PKGS+='default-jdk default-jre libjchart2d-java '
 
 ## Python
 if $USE_PYTHON_2; then
