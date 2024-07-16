@@ -4,6 +4,7 @@ import javax.swing.*;
 import javax.swing.table.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.AffineTransform;
 
 import java.io.*;
 import java.util.*;
@@ -68,6 +69,15 @@ public class Spy
         jif.add(new JScrollPane(channelTable), BorderLayout.CENTER);
 
         chartData = new ChartData(utime_now());
+
+        // if (isHiDpi()) {
+        //     System.out.println("HiDPI detected, setting UI scale to 2.0");
+        //     System.setProperty("sun.java2d.uiScale", "2.0");
+        // } else {
+        //     System.out.println("HiDPI not detected, not setting UI scale");
+        // }
+         //Float.toString(scaleFactor));
+        // SwingDPI.scaleFactor = scaleFeactor;
 
         jif.setSize(800,600);
         jif.setLocationByPlatform(true);
@@ -524,8 +534,43 @@ public class Spy
         boolean showURL = false;
     }
 
+    private static int getScreenDPI() {
+        // A bit of a hack to detect screen DPI.  If you do this through Java, it's already too late to set the uiScale property.
+        try {
+            // Execute the command through a shell
+            String[] cmd = {"/bin/sh", "-c", "xdpyinfo | grep resolution | awk '{print $2}'"};
+            Process process = Runtime.getRuntime().exec(cmd);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] dpiValues = line.split("x");
+                int dpiX = Integer.parseInt(dpiValues[0]);
+                int dpiY = Integer.parseInt(dpiValues[1]);
+                return (dpiX + dpiY) / 2; // Average the DPI values
+            }
+            // Print any errors from the command execution
+            while ((line = errorReader.readLine()) != null) {
+                System.err.println("Error: " + line);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        // Default DPI if unable to fetch
+        return 96;
+    }
+    
     public static void main(String args[])
     {
+        int screenDpi = getScreenDPI();
+        System.out.println("Screen DPI: " + screenDpi);
+        if (screenDpi > 150) {
+            System.setProperty("sun.java2d.uiScale", "2.0");
+        }
+        // System.out.println(Double.toString(Math.round(getScreenDPI() / 96.0)));
+        // System.out.println(Double.toString(Math.round(148.0 / 96.0)));
+        // System.setProperty("sun.java2d.uiScale", "1.5");//Double.toString(Math.round(getScreenDPI() / 96.0)));
+
         // check if the JRE is supplied by gcj, and warn the user if it is.
         if(System.getProperty("java.vendor").indexOf("Free Software Foundation") >= 0) {
             System.err.println("WARNING: Detected gcj. zcm-spy is not known to work well with gcj.");
