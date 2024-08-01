@@ -28,6 +28,9 @@ public class ObjectPanel extends JPanel
     int lastwidth = 500;
     int lastheight = 100;
     JViewport scrollViewport;
+    long lastDrawTimestamp = 0;
+
+    int MAX_FPS = 60;
 
     final int sparklineWidth = 150; // width in pixels of all sparklines
 
@@ -114,6 +117,15 @@ public class ObjectPanel extends JPanel
         repaint();
 
     }
+
+    public void repaintWithFramelimit() {
+        long now = System.currentTimeMillis();
+        if (now - lastDrawTimestamp > 1000/MAX_FPS) {
+            lastDrawTimestamp = now;
+            repaint();
+        }
+    }
+
 
     /**
      * If given a viewport, the object panel can make smart decisions to
@@ -700,7 +712,7 @@ public class ObjectPanel extends JPanel
         if (topFrame.getExtendedState() == Frame.ICONIFIED) {
             UpdateGraphDataWithoutPaint();
         } else {
-            repaint();
+            repaintWithFramelimit();
         }
     }
 
