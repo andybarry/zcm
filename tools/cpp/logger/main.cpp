@@ -12,6 +12,7 @@
 #include <vector>
 #include <signal.h>
 #include <string>
+#include <map>
 
 #include <errno.h>
 #include <time.h>
@@ -58,13 +59,15 @@ struct Args
     i64    max_target_memory  = 0;
     string plugin_path        = "";
     bool   debug              = false;
+    map<string, string> channel_renames;
+
 
     string input_fname;
 
     bool parse(int argc, char *argv[])
     {
         // set some defaults
-        const char *optstring = "hu:c:z:b:fir:s:ql:m:p:n:d";
+        const char *optstring = "hu:c:z:b:fir:s:ql:m:p:n:dR:";
         struct option long_opts[] = {
             { "help",              no_argument,       0, 'h' },
             { "zcm-url",           required_argument, 0, 'u' },
@@ -81,6 +84,7 @@ struct Args
             { "plugin-path",       required_argument, 0, 'p' },
             { "name",              required_argument, 0, 'n' },
             { "debug",             no_argument,       0, 'd' },
+            { "rename-channel",    required_argument, 0, 'R' },
 
             { 0, 0, 0, 0 }
         };
@@ -174,6 +178,22 @@ struct Args
                 case 'd':
                     debug = true;
                     break;
+                case 'R': {
+                    string rename_arg(optarg);
+                    size_t delim_pos = rename_arg.find('=');
+                    if (delim_pos == string::npos) {
+                        cerr << "Invalid rename format. Use --rename-channel OLD_NAME=NEW_NAME" << endl;
+                        return false;
+                    }
+                    string old_name = rename_arg.substr(0, delim_pos);
+                    string new_name = rename_arg.substr(delim_pos + 1);
+                    if (old_name.empty() || new_name.empty()) {
+                        cerr << "Both old and new channel names must be provided" << endl;
+                        return false;
+                    }
+                    channel_renames[old_name] = new_name;
+                } break;
+
                 case 'h': default: usage(); return false;
             };
         }
@@ -271,6 +291,12 @@ struct Args
              << "                             of all queues + max-target-memory" << endl
              << "  -p, --plugin-path=path     Path to shared library containing transcoder plugins" << endl
              << "  -n, --name                 Name this process a custom process name for htop." << endl
+             << "  -R, --rename-channel OLD_NAME=NEW_NAME" << endl
+             << "                             Rename a channel from OLD_NAME to NEW_NAME." << endl
+             << "                             This option can be used multiple times." << endl
+             << "                             This is helpful for systems where replaying a log can cause" << endl
+             << "                             problems during replay, like when using ZCM to launch processes" << endl
+             << "                             with a program like Procman." << endl
              << endl
              << "Rotating / splitting log files" << endl
              << "==============================" << endl
@@ -485,7 +511,11 @@ struct Logger
 
         zcm::LogEvent* le = new zcm::LogEvent;
         le->timestamp = rbuf->recv_utime;
-        le->channel   = channel;
+        if (args.channel_renames.find(channel) != args.channel_renames.end()) {
+            le->channel = args.channel_renames[channel];
+        } else {
+            le->channel = channel;
+        }
         le->datalen   = rbuf->data_size;
 
         if (!shard_plugins[shardNum].empty()) {
