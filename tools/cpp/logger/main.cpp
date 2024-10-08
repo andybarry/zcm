@@ -33,6 +33,7 @@ using namespace std;
 #include "platform.hpp"
 
 static atomic_int done {0};
+static atomic_int got_sighup {0};
 
 struct Args
 {
@@ -610,6 +611,19 @@ struct Logger
             }
         }
 
+        // Did we get a SIGHUP and the user wants a new logfile?
+        if (got_sighup) {
+            log->close();
+            if (args.rotate > 0)
+                rotate_logfiles();
+            if (!openLogfile()) exit(1);
+            num_splits++;
+            logsize = 0;
+            last_report_logsize = 0;
+
+            got_sighup = 0;
+        }
+
         if (log->writeEvent(le) != 0) {
             static u64 last_spew_utime = 0;
             string reason = strerror(errno);
@@ -680,6 +694,12 @@ void sighandler(int signal)
     if (done == 3) exit(1);
 }
 
+void sighup_handler(int signal)
+{
+    got_sighup = 1;
+    logger.wakeup();
+}
+
 int main(int argc, char *argv[])
 {
     Platform::setstreambuf();
@@ -713,6 +733,7 @@ int main(int argc, char *argv[])
     signal(SIGINT,  sighandler);
     signal(SIGQUIT, sighandler);
     signal(SIGTERM, sighandler);
+    signal(SIGHUP,  sighup_handler);
 
     ZCM_DEBUG("Starting zcms");
     for (auto& z : zcms) z->start();
