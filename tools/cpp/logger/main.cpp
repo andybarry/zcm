@@ -228,7 +228,8 @@ struct Args
         }
 
         if (rotate > 0 && auto_increment) {
-            cerr << "ERROR.  --increment and --rotate can't both be used. Note that if you don't want --increment, you must specify a log filename." << endl;
+            cerr << "ERROR.  --increment and --rotate can't both be used." << endl
+                 << "Note that if you don't want --increment, you must specify a log filename." << endl;
             return false;
         }
 
@@ -612,7 +613,7 @@ struct Logger
         }
 
         // Did we get a SIGHUP and the user wants a new logfile?
-        if (got_sighup && (args.auto_increment || (args.rotate > 0))) {
+        if (got_sighup) {
             log->close();
             if (args.rotate > 0)
                 rotate_logfiles();
