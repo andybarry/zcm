@@ -564,7 +564,7 @@ public class Spy
     {
         int screenDpi = getScreenDPI();
         System.out.println("Screen DPI: " + screenDpi);
-        if (screenDpi > 150) {
+        if (screenDpi == 144) {
             System.setProperty("sun.java2d.uiScale", "2.0");
         }
         // System.out.println(Double.toString(Math.round(getScreenDPI() / 96.0)));
