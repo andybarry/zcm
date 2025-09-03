@@ -1,6 +1,6 @@
 # cython: language_level=2
 
-from libc.stdint cimport int64_t, int32_t, uint32_t, uint8_t
+from libc.stdint cimport int64_t, int32_t, uint32_t, uint8_t, uint64_t
 from posix.unistd cimport off_t
 from inspect import signature
 import time
@@ -52,6 +52,8 @@ cdef extern from "zcm/zcm.h":
     int  zcm_write_topology    (zcm_t* zcm, const char* name)
 
     int  zcm_handle_nonblock(zcm_t* zcm)
+
+    int  zcm_query_drops(zcm_t* zcm, uint64_t* out_drops)
 
     ctypedef struct zcm_eventlog_t:
         pass
@@ -174,6 +176,14 @@ cdef class ZCM:
         return zcm_write_topology(self.zcm, name.encode('utf-8'))
     def handleNonblock(self):
         return zcm_handle_nonblock(self.zcm)
+    
+    def queryDrops(self):
+        cdef uint64_t drops
+        cdef int result = zcm_query_drops(self.zcm, &drops)
+        if result == ZCM_EOK:
+            return drops
+        else:
+            return None
 
 cdef class LogEvent:
     cdef int64_t eventnum
