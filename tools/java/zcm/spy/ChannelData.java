@@ -25,6 +25,8 @@ public class ChannelData
     public double      hz;
     public long        hz_last_utime;
     public long        hz_last_nreceived;
+    public long        hz_nreceived_since_jitter_update;
+    public long        hz_num_hz_updates;
     public long        hz_min_interval;
     public long        hz_max_interval;
     public long        hz_bytes;

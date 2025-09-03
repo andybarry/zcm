@@ -298,7 +298,11 @@ public class Spy
                 case 4:
                     return String.format("%6.2f ms",1000.0/cd.hz); // cd.max_interval/1000.0);
                 case 5:
-                    return String.format("%6.2f ms",(cd.max_interval - cd.min_interval)/1000.0);
+                    if (cd.hz_num_hz_updates > 1 && cd.hz > 0) {
+                        return String.format("%6.2f ms",(cd.max_interval - cd.min_interval)/1000.0);
+                    } else {
+                        return " -";
+                    }
                 case 6:
                     return String.format("%6.2f KB/s", (cd.bandwidth/1024.0));
                 case 7:
@@ -429,10 +433,16 @@ public class Spy
 
                         cd.hz = diff_recv / (dutime/1000000.0);
 
-                        cd.min_interval = cd.hz_min_interval;
-                        cd.max_interval = cd.hz_max_interval;
-                        cd.hz_min_interval = 9999;
-                        cd.hz_max_interval = 0;
+                        cd.hz_nreceived_since_jitter_update += diff_recv;
+
+                        if (cd.hz_nreceived_since_jitter_update >= 2) {
+                            cd.min_interval = cd.hz_min_interval;
+                            cd.max_interval = cd.hz_max_interval;
+                            cd.hz_min_interval = 99999999;
+                            cd.hz_max_interval = 0;
+                            cd.hz_nreceived_since_jitter_update = 0;
+                            cd.hz_num_hz_updates++;
+                        }
                         cd.bandwidth = cd.hz_bytes / (dutime/1000000.0);
                         cd.hz_bytes = 0;
                     }
