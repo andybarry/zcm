@@ -102,7 +102,7 @@ fi
 if $USE_PYTHON_2; then
     pip install --user $PIP_PKGS
 else
-    pip3 install --user --break-system-packages $PIP_PKGS
+    pip3 install --user $PIP_PKGS
 fi
 ret=$?
 if [[ $ret -ne 0 && "$STRICT" == "true" ]]; then
