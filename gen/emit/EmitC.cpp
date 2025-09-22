@@ -111,7 +111,11 @@ struct EmitHeader : public Emit
 
         emit(0, "#include <stdint.h>");
         emit(0, "#include <stdlib.h>");
-        emit(0, "#include <zcm/zcm_coretypes.h>");
+        if (zcm.gopt->getBool("c-coretypes-from-local")) {
+            emit(0, "#include \"zcm/zcm_coretypes.h\"");
+        } else {
+            emit(0, "#include <zcm/zcm_coretypes.h>");
+        }
 
         if(!zcm.gopt->getBool("c-no-pubsub")) {
             emit(0, "#include <zcm/zcm.h>");
@@ -909,6 +913,7 @@ struct EmitSource : public Emit
         emit(0,"%s* %s_copy(const %s* p)", tn_, tn_, tn_);
         emit(0,"{");
         emit(1,    "%s* q = (%s*) malloc(sizeof(%s));", tn_, tn_, tn_);
+        emit(1,    "if (!q) return NULL;");
         emit(1,    "__%s_clone_array(p, q, 1);", tn_);
         emit(1,    "return q;");
         emit(0,"}");
@@ -993,6 +998,7 @@ struct EmitSource : public Emit
         //       table...
         emit(0, "    %s_subscription_t* n = (%s_subscription_t*)", tn_, tn_);
         emit(0, "                       malloc(sizeof(%s_subscription_t));", tn_);
+        emit(0, "    if (!n) return NULL;");
         emit(0, "    n->user_handler = f;");
         emit(0, "    n->userdata = userdata;");
         emit(0, "    n->z_sub = zcm_subscribe (zcm, channel,");
@@ -1085,11 +1091,12 @@ static int emitStructSource(const ZCMGen& zcm, const ZCMStruct& zs, const string
 
 void setupOptionsC(GetOpt& gopt)
 {
-    gopt.addString(0, "c-cpath",    ".",      "Location for .c files");
-    gopt.addString(0, "c-hpath",    ".",      "Location for .h files");
-    gopt.addString(0, "c-include",   "",       "Generated #include lines reference this folder");
-    gopt.addBool(0, "c-no-pubsub",   0,     "Do not generate _publish and _subscribe functions");
-    gopt.addBool(0, "c-typeinfo",   0,      "Generate typeinfo functions for each type");
+    gopt.addString(0, "c-cpath",            ".", "Location for .c files");
+    gopt.addString(0, "c-hpath",            ".", "Location for .h files");
+    gopt.addString(0, "c-include",           "", "Generated #include lines reference this folder");
+    gopt.addBool(0, "c-no-pubsub",            0, "Do not generate _publish and _subscribe functions");
+    gopt.addBool(0, "c-typeinfo",             0, "Generate typeinfo functions for each type");
+    gopt.addBool(0, "c-coretypes-from-local", 0, "use \"\" instead of <> when including coretypes");
 }
 
 int emitC(const ZCMGen& zcm)

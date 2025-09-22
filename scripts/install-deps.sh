@@ -23,7 +23,7 @@ USE_JULIA=true
 JULIA_0_6_MODE=false
 USE_NODE=true
 USE_PYTHON_2=false
-while getopts "ijmsp" opt; do
+while getopts "ijmnsp" opt; do
     case $opt in
         i) STRICT=false ;;
         j) USE_JULIA=false ;;
@@ -41,7 +41,7 @@ PKGS=''
 PIP_PKGS=''
 
 ## Dependency dependencies
-PKGS+='mlocate wget '
+PKGS+='wget '
 
 ## Waf dependencies
 PKGS+='pkg-config zip '
@@ -59,9 +59,8 @@ PKGS+='default-jdk default-jre libjchart2d-java '
 if $USE_PYTHON_2; then
     PKGS+='python python-pip '
 else
-    PKGS+='python3 python3-pip '
+    PKGS+='python3 python3-dev python3-pip '
 fi
-PIP_PKGS+='Cython==0.29.33 '
 PIP_PKGS+='bitstruct '
 
 # Build cache dep
@@ -98,11 +97,18 @@ if $SINGLE_MODE; then
 else
     sudo apt-get install -yq $PKGS
 fi
-
-if $USE_PYTHON_2; then
-    pip install --user $PIP_PKGS
+PYTHON3_VERSION=$(python3 --version | cut -d ' ' -f 2 | cut -d '.' -f 2)
+if [[ $USE_PYTHON_2 == "true" || $PYTHON3_VERSION -lt 12 ]]; then
+    PIP_PKGS+='Cython==0.29.33 '
 else
-    pip3 install --user --break-system-packages $PIP_PKGS
+    PIP_PKGS+='Cython==3.0.12 '
+fi
+
+[[ -z "$VIRTUAL_ENV" ]] && USER_ARG="--user" || USER_ARG=""
+if $USE_PYTHON_2; then
+    pip install $USER_ARG $PIP_PKGS
+else
+    pip3 install $USER_ARG  $PIP_PKGS
 fi
 ret=$?
 if [[ $ret -ne 0 && "$STRICT" == "true" ]]; then
@@ -127,12 +133,12 @@ if $USE_NODE; then
         $outfile
         rm $outfile
     fi
-    echo "Installing node version v10.23.3"
+    echo "Installing node version v14.18.1"
     bash -c "export NVM_DIR=\$HOME/.nvm; \
         [ -s \"\$NVM_DIR/nvm.sh\" ] && \
         \\. \"\$NVM_DIR/nvm.sh\"; \
-        nvm install v10.23.3 && \
-        nvm alias default v10.23.3"
+        nvm install v14.18.1 && \
+        nvm alias default v14.18.1"
 fi
 
 ## Julia
@@ -197,13 +203,5 @@ rm -rf $ROOTDIR/deps/cxxtest
 wget -O $ROOTDIR/deps/cxxtest.zip https://github.com/ZeroCM/cxxtest/archive/master.zip
 unzip -d $ROOTDIR/deps $ROOTDIR/deps/cxxtest.zip
 mv $ROOTDIR/deps/cxxtest{-master,}
-
-echo "Updating db"
-sudo updatedb
-ret=$?
-if [[ $ret -ne 0 && "$STRICT" == "true" ]]; then
-    echo "Failed to updatedb"
-    exit $ret
-fi
 
 exit 0

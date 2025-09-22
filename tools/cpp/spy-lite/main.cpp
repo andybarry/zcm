@@ -1,4 +1,5 @@
 #include <getopt.h>
+#include <cstring>
 
 #include "util/TypeDb.hpp"
 
@@ -81,6 +82,13 @@ struct SpyInfo
             minfomap[channel] = minfo;
         }
         minfo->addMessage(TimeUtil::utime(), rbuf);
+    }
+
+    void clearMessages()
+    {
+        for (auto& kv : minfomap) delete kv.second;
+        minfomap.clear();
+        names.clear();
     }
 
     void display()
@@ -237,6 +245,8 @@ struct SpyInfo
         } else if (ch == '?') {
             prev_mode = DisplayMode::Overview;
             mode = DisplayMode::Help;
+        } else if (ch == DEL_KEY) {
+            clearMessages();
         } else if (ch == ESCAPE_KEY) {
             prefix_filter.clear();
         } else if (('a' <= ch && ch <= 'z') ||
@@ -285,7 +295,7 @@ struct SpyInfo
                 view_id += (ch - '0');
             }
         } else if (ch == '\n') {
-            if (view_id >= 0) {
+            if (view_id > 0) {
                 // set and increase sub-msg decoding depth
                 minfo.incViewDepth(view_id, decode_prefix_filter);
                 decode_prefix_filter.clear();
@@ -331,7 +341,7 @@ struct SpyInfo
                    (ch == '_') || (ch == '/')) {
             is_setting_decode_prefix = true;
             return handleKeyboardDecodeSettingPrefix(ch);
-        } else if ('0' <= ch && ch <= '9') {
+        } else if ('0' < ch && ch <= '9') {
             // shortcut for single digit channels
             view_id = ch - '0';
             // set and increase sub-msg decoding depth
@@ -386,6 +396,86 @@ struct SpyInfo
 
     string decode_prefix_filter = "";
     bool is_setting_decode_prefix = false;
+};
+
+struct Args
+{
+    const char *zcmurl = nullptr;
+    const char *zcmtypes_path = nullptr;
+    vector<string> channels;
+    bool debug = false;
+    bool showBandwidth = false;
+    float hz = 20;
+
+    bool parse(int argc, char *argv[])
+    {
+        // set some defaults
+        const char *optstring = "hu:p:c:bdf:";
+        struct option long_opts[] = {
+            { "help",            no_argument, 0, 'h' },
+            { "zcm-url",   required_argument, 0, 'u' },
+            { "type-path", required_argument, 0, 'p' },
+            { "channel",   required_argument, 0, 'c' },
+            { "bandwidth",       no_argument, 0, 'b' },
+            { "debug",           no_argument, 0, 'd' },
+            { "frequency", required_argument, 0, 'f' },
+            { 0, 0, 0, 0 }
+        };
+
+        int c;
+        while ((c = getopt_long (argc, argv, optstring, long_opts, 0)) >= 0) {
+            switch (c) {
+                case 'u': zcmurl        = optarg; break;
+                case 'p': zcmtypes_path = optarg; break;
+                case 'c': channels.push_back(optarg); break;
+                case 'b': showBandwidth = true;   break;
+                case 'd': debug         = true;   break;
+                case 'f': hz            = atof(optarg); break;
+                case 'h': default: usage(); return false;
+            };
+        }
+
+        if (channels.empty()) channels.push_back(".*");
+        if (hz == 0) {
+            fprintf(stderr, "Please specify valid refresh frequency\n");
+            return false;
+        }
+
+        return true;
+    }
+
+    void usage()
+    {
+        fprintf(stderr, "usage: zcm-spy-lite [options]\n"
+                "\n"
+                "    Terminal based spy utility. Subscribes to all channels on a ZCM\n"
+                "    transport and displays them in an interactive terminal.\n"
+#ifndef USING_ELF
+                "\n"
+                "    Note that since you compiled without libelf, zcm-spy-lite is\n"
+                "    unable to decode and show the internals of messages\n"
+#endif
+                "\n"
+                "Example:\n"
+                "    zcm-spy-lite -u udpm://239.255.76.67:7667"
+#ifdef USING_ELF
+                " -p path/to/zcmtypes.so"
+#endif
+                "\n"
+                "\n"
+                "Options:\n"
+                "\n"
+                "  -h, --help                 Shows this help text and exits\n"
+                "  -u, --zcm-url=URL          Log messages on the specified ZCM URL\n"
+#ifdef USING_ELF
+                "  -p, --type-path=PATH       Path to a shared library containing the zcmtypes\n"
+#endif
+                "  -c, --channel=CHANNEL      Channel to subscribe to. Can be specified more than once\n"
+                "  -b, --bandwidth            Calculate and show bandwidth of each channel\n"
+                "  -d, --debug                Run a dry run to ensure proper spy setup\n"
+                "  -f, --frequency            Specify the screen refresh frequency in Hz\n"
+                "\n");
+    }
 };
 
 void *keyboard_thread_func(void *arg)
@@ -448,25 +538,44 @@ void clearscreen()
     printf("\033[0;0H");
 }
 
-void printThreadFunc(SpyInfo *spy)
+static void printHeader(const char* title, bool showBandwidth)
 {
-    static constexpr float hz = 20.0;
-    static constexpr u64 period = 1000000 / hz;
+    static const char* TITLE_PFX = "ZCM-SPY-LITE: ";
+    static int TITLE_PFX_LEN = strlen(TITLE_PFX);
+
+    int title_len = strlen(title);
+    int total_width = showBandwidth ? 79 : 76;
+    int padding = (total_width - title_len - 2 - TITLE_PFX_LEN) / 2;
+    int remaining = total_width - title_len - 2 - padding - TITLE_PFX_LEN;
+
+    // Print top border
+    printf("  ");
+    for (int i = 0; i < total_width; i++) printf("*");
+    printf(" \n");
+
+    // Print middle line with title
+    printf("  ");
+    for (int i = 0; i < padding; i++) printf("*");
+    printf(" %s%s ", TITLE_PFX, title);
+    for (int i = 0; i < remaining; i++) printf("*");
+    printf(" \n");
+
+    // Print bottom border
+    printf("  ");
+    for (int i = 0; i < total_width; i++) printf("*");
+    printf(" \n");
+}
+
+void printThreadFunc(SpyInfo *spy, Args *args)
+{
+    static u64 period = 1000000 / args->hz;
 
     DEBUG(1, "INFO: %s: Starting\n", "print_thread");
     while (!quit) {
         usleep(period);
 
         clearscreen();
-        if (spy->showBandwidth) {
-            printf("  ******************************************************************************* \n");
-            printf("  ******************************** ZCM-SPY-LITE ********************************* \n");
-            printf("  ******************************************************************************* \n");
-        } else {
-            printf("  **************************************************************************** \n");
-            printf("  ******************************* ZCM-SPY-LITE ******************************* \n");
-            printf("  **************************************************************************** \n");
-        }
+        printHeader(args->zcmurl, spy->showBandwidth);
 
         spy->display();
 
@@ -498,78 +607,6 @@ static void sighandler(int s)
             break;
     }
 }
-
-struct Args
-{
-    const char *zcmurl = nullptr;
-    const char *zcmtypes_path = nullptr;
-    vector<string> channels;
-    bool debug = false;
-    bool showBandwidth = false;
-
-    bool parse(int argc, char *argv[])
-    {
-        // set some defaults
-        const char *optstring = "hu:p:c:bd";
-        struct option long_opts[] = {
-            { "help",            no_argument, 0, 'h' },
-            { "zcm-url",   required_argument, 0, 'u' },
-            { "type-path", required_argument, 0, 'p' },
-            { "channel",   required_argument, 0, 'c' },
-            { "bandwidth",       no_argument, 0, 'b' },
-            { "debug",           no_argument, 0, 'd' },
-            { 0, 0, 0, 0 }
-        };
-
-        int c;
-        while ((c = getopt_long (argc, argv, optstring, long_opts, 0)) >= 0) {
-            switch (c) {
-                case 'u': zcmurl        = optarg; break;
-                case 'p': zcmtypes_path = optarg; break;
-                case 'c': channels.push_back(optarg); break;
-                case 'b': showBandwidth = true;   break;
-                case 'd': debug         = true;   break;
-                case 'h': default: usage(); return false;
-            };
-        }
-
-        if (channels.empty()) channels.push_back(".*");
-
-        return true;
-    }
-
-    void usage()
-    {
-        fprintf(stderr, "usage: zcm-spy-lite [options]\n"
-                "\n"
-                "    Terminal based spy utility. Subscribes to all channels on a ZCM\n"
-                "    transport and displays them in an interactive terminal.\n"
-#ifndef USING_ELF
-                "\n"
-                "    Note that since you compiled without libelf, zcm-spy-lite is\n"
-                "    unable to decode and show the internals of messages\n"
-#endif
-                "\n"
-                "Example:\n"
-                "    zcm-spy-lite -u udpm://239.255.76.67:7667"
-#ifdef USING_ELF
-                " -p path/to/zcmtypes.so"
-#endif
-                "\n"
-                "\n"
-                "Options:\n"
-                "\n"
-                "  -h, --help                 Shows this help text and exits\n"
-                "  -u, --zcm-url=URL          Log messages on the specified ZCM URL\n"
-#ifdef USING_ELF
-                "  -p, --type-path=PATH       Path to a shared library containing the zcmtypes\n"
-#endif
-                "  -c, --channel=CHANNEL      Channel to subscribe to. Can be specified more than once\n"
-                "  -b, --bandwidth            Calculate and show bandwidth of each channel\n"
-                "  -d, --debug                Run a dry run to ensure proper spy setup\n"
-                "\n");
-    }
-};
 
 int main(int argc, char *argv[])
 {
@@ -608,6 +645,7 @@ int main(int argc, char *argv[])
     setvbuf(stdout, NULL, _IOFBF, 2048);
 
     // start zcm
+    if (!args.zcmurl)  args.zcmurl = getenv("ZCM_DEFAULT_URL");
     zcm_t *zcm = zcm_create(args.zcmurl);
     if (!zcm) {
         fprintf(stderr, "Couldn't initialize ZCM! Try providing a URL with the "
@@ -619,7 +657,7 @@ int main(int argc, char *argv[])
     }
     zcm_start(zcm);
 
-    thread printThread {printThreadFunc, &spy};
+    thread printThread {printThreadFunc, &spy, &args};
 
     // use this thread as the keyboard thread
     keyboard_thread_func(&spy);
