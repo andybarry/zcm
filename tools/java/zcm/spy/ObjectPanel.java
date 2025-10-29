@@ -30,7 +30,10 @@ public class ObjectPanel extends JPanel
     JViewport scrollViewport;
     long lastDrawTimestamp = 0;
 
-    int MAX_FPS = 60;
+    private static final int MAX_RENDER_FPS = 60;
+    private static final int MAX_SPARKLINE_UPDATES_PER_SEC = 60;
+    private static final long REPAINT_MIN_INTERVAL_MS = Math.max(1, 1000L / MAX_RENDER_FPS);
+    private static final long SPARKLINE_MIN_UPDATE_INTERVAL_US = Math.max(1, 1_000_000L / MAX_SPARKLINE_UPDATES_PER_SEC);
 
     final int sparklineWidth = 150; // width in pixels of all sparklines
 
@@ -93,9 +96,34 @@ public class ObjectPanel extends JPanel
         // user clicks in a place a line used to be, but is no longer
         //there since the array it was in got shorter.
         int lastDrawNumber = 0;
+        long lastChartUpdateUtime = Long.MIN_VALUE;
     }
 
     ArrayList<Section> sections = new ArrayList<Section>();
+
+    private boolean maybeAppendSample(SparklineData data, ITrace2D trace, double value, long sampleUtime) {
+        if (data == null || trace == null || Double.isNaN(value)) {
+            return false;
+        }
+
+        long lastUpdate = data.lastChartUpdateUtime;
+        if (lastUpdate != Long.MIN_VALUE && sampleUtime >= lastUpdate) {
+            long delta = sampleUtime - lastUpdate;
+            if (delta < SPARKLINE_MIN_UPDATE_INTERVAL_US) {
+                return false;
+            }
+        }
+
+        double maxX = trace.getMaxX();
+        double newX = sampleUtime / 1000000.0d;
+        if (!Double.isNaN(maxX) && newX <= maxX) {
+            newX = Math.nextUp(maxX);
+        }
+
+        trace.addPoint(newX, value);
+        data.lastChartUpdateUtime = sampleUtime;
+        return true;
+    }
 
     /**
      * Constructor for an object panel, call when the user clicks to see more
@@ -119,8 +147,12 @@ public class ObjectPanel extends JPanel
     }
 
     public void repaintWithFramelimit() {
+        repaintWithFramelimit(false);
+    }
+
+    public void repaintWithFramelimit(boolean force) {
         long now = System.currentTimeMillis();
-        if (now - lastDrawTimestamp > 1000/MAX_FPS) {
+        if (force || now - lastDrawTimestamp >= REPAINT_MIN_INTERVAL_MS) {
             lastDrawTimestamp = now;
             repaint();
         }
@@ -456,18 +488,18 @@ public class ObjectPanel extends JPanel
 
             if (collapse_depth > 0)
             {
+                if (Double.isNaN(value)) {
+                    return;
+                }
+
                 // even if we are collapsed, we need to update the data in
                 // graphs being displayed
                 SparklineData data = cs.sparklines.get(name);
 
-                if (data.chart != null)
+                if (data != null && data.chart != null)
                 {
                     ITrace2D trace = data.chart.getTraces().first();
-
-                    if (trace.getMaxX() < utime/1000000.0d) {
-                        // this is a new point, add it
-                        trace.addPoint(utime/1000000.0d, value);
-                    }
+                    maybeAppendSample(data, trace, value, utime);
                 }
                 return;
             }
@@ -526,10 +558,7 @@ public class ObjectPanel extends JPanel
                 data.xmax = x[3]+sparklineWidth;
 
                 // add the data to our trace
-                if (trace.getMaxX() < utime/1000000.0d) {
-                    // this is a new point, add it
-                    trace.addPoint(utime/1000000.0d, value);
-                }
+                maybeAppendSample(data, trace, value, utime);
 
                 data.lastDrawNumber = currentDrawNumber;
 
@@ -822,7 +851,7 @@ public class ObjectPanel extends JPanel
         if (previousNumSections != sections.size()) {
             // if the number of sections has changed, the system that figures out
             // what to draw based on user view needs to rerun to update
-            repaint();
+            repaintWithFramelimit(true);
         }
     }
 
@@ -974,9 +1003,8 @@ public class ObjectPanel extends JPanel
 
                 ITrace2D trace = sparklineToUpdate.chart.getTraces().first();
 
-                if (trace.getMaxX() < utime/1000000.0d) {
-                    // this is a new point, add it
-                    trace.addPoint(utime/1000000.0d, value);
+                if (!Double.isNaN(value)) {
+                    maybeAppendSample(sparklineToUpdate, trace, value, utime);
                 }
                 return;
             }
@@ -1073,9 +1101,8 @@ public class ObjectPanel extends JPanel
             // or you can end up not displaying a section until the viewport changes
             updateVisibleSparklines(scrollViewport);
 
-            // call repaint here so the UI will update immediately instead of
-            // waiting for the next piece of data
-            repaint();
+            // call repaint here so the UI will update promptly
+            repaintWithFramelimit(true);
         }
     }
 
@@ -1094,7 +1121,7 @@ public class ObjectPanel extends JPanel
             doSparklineInteraction(e);
 
             // repaint in case the hovering changed
-            repaint();
+            repaintWithFramelimit();
         }
     }
 
