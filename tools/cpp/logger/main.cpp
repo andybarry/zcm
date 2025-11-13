@@ -21,6 +21,7 @@
 #include "zcm/zcm-cpp.hpp"
 #include "zcm/util/debug.h"
 #include "zcm/zcm_coretypes.h"
+#include "zcm/zcm.h"
 
 #include "util/TranscoderPluginDb.hpp"
 
@@ -61,6 +62,8 @@ struct Args
     string plugin_path        = "";
     bool   debug              = false;
     map<string, string> channel_renames;
+    string logger_regex_pattern = "";
+    regex  logger_regex;
 
 
     string input_fname;
@@ -86,6 +89,7 @@ struct Args
             { "name",              required_argument, 0, 'n' },
             { "debug",             no_argument,       0, 'd' },
             { "rename-channel",    required_argument, 0, 'R' },
+            { "logger-regex",      required_argument, 0, 'L' },
 
             { 0, 0, 0, 0 }
         };
@@ -192,7 +196,26 @@ struct Args
                         cerr << "Both old and new channel names must be provided" << endl;
                         return false;
                     }
+                    if (old_name.size() > ZCM_CHANNEL_MAXLEN) {
+                        cerr << "ERROR: Old channel name exceeds maximum length of " << ZCM_CHANNEL_MAXLEN
+                             << " characters: \"" << old_name << "\" (length: " << old_name.size() << ")" << endl;
+                        return false;
+                    }
+                    if (new_name.size() > ZCM_CHANNEL_MAXLEN) {
+                        cerr << "ERROR: New channel name exceeds maximum length of " << ZCM_CHANNEL_MAXLEN
+                             << " characters: \"" << new_name << "\" (length: " << new_name.size() << ")" << endl;
+                        return false;
+                    }
                     channel_renames[old_name] = new_name;
+                } break;
+                case 'L': {
+                    logger_regex_pattern = string(optarg);
+                    try {
+                        logger_regex = regex(logger_regex_pattern);
+                    } catch (const regex_error& e) {
+                        cerr << "Invalid regex pattern: " << e.what() << endl;
+                        return false;
+                    }
                 } break;
 
                 case 'h': default: usage(); return false;
@@ -255,9 +278,8 @@ struct Args
              << "                             Every -c is subscribed to on the prior specified -u url" << endl
              << "                             If no -u url has been specified, -c will apply to the " << endl
              << "                             ZCM_DEFAULT_URL." << endl
-             << "                             Inverting channel selection is possible through regex" << endl
-             << "                             For example: -c \"^(?!(EXAMPLE)$).*$\" will subscribe" << endl
-             << "                             to everything except \"EXAMPLE\"" << endl
+             << "                             Channel can be a regex pattern, but the length is" << endl
+             << "                             limited to ZCM_CHANNEL_MAXLEN (" << ZCM_CHANNEL_MAXLEN << " characters)." << endl
              << "  -z, --queue-size=MSGS      Size of zcm send and receive queues in number of messages." << endl
              << "                             Can provide multiple times." << endl
              << "                             Applies to prior -u url." << endl
@@ -300,6 +322,12 @@ struct Args
              << "                             This is helpful for systems where replaying a log can cause" << endl
              << "                             problems during replay, like when using ZCM to launch processes" << endl
              << "                             with a program like Procman." << endl
+             << "      --logger-regex=REGEX   Filter channels by regex pattern. Only channels matching" << endl
+             << "                             the regex pattern will be logged. If the channel does not" << endl
+             << "                             match, the handler returns early without processing." << endl
+             << "                             Inverting channel selection is possible through regex." << endl
+             << "                             For example: --logger-regex \"^(?!(EXAMPLE)$).*$\" will log" << endl
+             << "                             everything except \"EXAMPLE\"" << endl
              << endl
              << "Rotating / splitting log files" << endl
              << "==============================" << endl
@@ -510,15 +538,34 @@ struct Logger
     void handler(const zcm::ReceiveBuffer* rbuf,
                  const string& channel, size_t shardNum)
     {
+        if (channel.size() > ZCM_CHANNEL_MAXLEN) {
+            cerr << "ERROR: Received channel name exceeds maximum length of " << ZCM_CHANNEL_MAXLEN
+                 << " characters: \"" << channel << "\" (length: " << channel.size() << ")" << endl;
+            exit(1);
+        }
+
+        if (!args.logger_regex_pattern.empty()) {
+            if (!regex_match(channel, args.logger_regex)) {
+                return;
+            }
+        }
+
         vector<zcm::LogEvent*> evts;
 
         zcm::LogEvent* le = new zcm::LogEvent;
         le->timestamp = rbuf->recv_utime;
+        string final_channel;
         if (args.channel_renames.find(channel) != args.channel_renames.end()) {
-            le->channel = args.channel_renames[channel];
+            final_channel = args.channel_renames[channel];
         } else {
-            le->channel = channel;
+            final_channel = channel;
         }
+        if (final_channel.size() > ZCM_CHANNEL_MAXLEN) {
+            cerr << "ERROR: Final channel name (after rename) exceeds maximum length of " << ZCM_CHANNEL_MAXLEN
+                 << " characters: \"" << final_channel << "\" (length: " << final_channel.size() << ")" << endl;
+            exit(1);
+        }
+        le->channel = final_channel;
         le->datalen   = rbuf->data_size;
 
         if (!shard_plugins[shardNum].empty()) {
